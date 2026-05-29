@@ -1,620 +1,363 @@
 import os
-import uuid
-from flask import Flask, request, render_template_string, jsonify
+import sys
+import threading
+import tkinter as tk
+from tkinter import filedialog
+import customtkinter as ctk
+from PIL import Image, ImageTk, ImageDraw, ImageFilter
+import numpy as np
 
-app = Flask(__name__)
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-# ── HTML Template ─────────────────────────────────────────────────────────────
-HTML = """
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Chỉ Tay Huyền Bí · Palmistry AI</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap" rel="stylesheet"/>
-<style>
-  :root {
-    --ink:      #0d0b14;
-    --deep:     #110e1f;
-    --gold:     #c9a84c;
-    --gold2:    #e8c97a;
-    --mystic:   #7b4fa6;
-    --glow:     #b06ef3;
-    --blood:    #8b1a1a;
-    --cream:    #f5edd6;
-    --muted:    #7a6e8a;
-    --line:     rgba(201,168,76,0.25);
-  }
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html { scroll-behavior: smooth; }
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("dark-blue")
 
-  body {
-    font-family: 'Cormorant Garamond', serif;
-    background: var(--ink);
-    color: var(--cream);
-    min-height: 100vh;
-    overflow-x: hidden;
-    position: relative;
-  }
+DEEP_PURPLE   = "#1A0A2E"
+MID_PURPLE    = "#2D1B5E"
+CARD_BG       = "#1E0F3A"
+ACCENT_GOLD   = "#C9A84C"
+ACCENT_GLOW   = "#A67C3A"
+ACCENT_VIOLET = "#7B5EA7"
+TEXT_MAIN     = "#F0E6FF"
+TEXT_MUTED    = "#A08CC0"
+TEXT_GOLD     = "#E8C878"
+SUCCESS_GREEN = "#4CAF82"
+BORDER_COLOR  = "#3D2870"
 
-  /* ── Stars background ── */
-  body::before {
-    content: '';
-    position: fixed; inset: 0;
-    background:
-      radial-gradient(ellipse 80% 60% at 50% -10%, rgba(123,79,166,0.35) 0%, transparent 70%),
-      radial-gradient(ellipse 50% 40% at 90% 80%, rgba(139,26,26,0.2) 0%, transparent 60%),
-      radial-gradient(ellipse 40% 30% at 10% 90%, rgba(201,168,76,0.1) 0%, transparent 60%);
-    pointer-events: none; z-index: 0;
-  }
-
-  /* Animated stars */
-  .stars {
-    position: fixed; inset: 0; pointer-events: none; z-index: 0;
-    overflow: hidden;
-  }
-  .star {
-    position: absolute;
-    background: white;
-    border-radius: 50%;
-    animation: twinkle var(--dur, 3s) ease-in-out infinite;
-    animation-delay: var(--del, 0s);
-    opacity: 0;
-  }
-  @keyframes twinkle {
-    0%, 100% { opacity: 0; transform: scale(0.5); }
-    50%       { opacity: var(--op, 0.8); transform: scale(1); }
-  }
-
-  main { position: relative; z-index: 1; }
-
-  /* ── Header ── */
-  header {
-    text-align: center;
-    padding: 60px 20px 30px;
-    border-bottom: 1px solid var(--line);
-  }
-  .eye-symbol {
-    font-size: 3rem;
-    display: block;
-    margin-bottom: 12px;
-    filter: drop-shadow(0 0 16px var(--glow));
-    animation: float 4s ease-in-out infinite;
-  }
-  @keyframes float {
-    0%,100% { transform: translateY(0); }
-    50%      { transform: translateY(-8px); }
-  }
-  h1 {
-    font-family: 'Cinzel Decorative', serif;
-    font-size: clamp(1.6rem, 4vw, 2.8rem);
-    font-weight: 900;
-    background: linear-gradient(135deg, var(--gold) 0%, var(--gold2) 50%, var(--gold) 100%);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    letter-spacing: 0.06em;
-    text-shadow: none;
-    line-height: 1.2;
-  }
-  .tagline {
-    margin-top: 10px;
-    font-size: 1.05rem;
-    font-style: italic;
-    color: var(--muted);
-    letter-spacing: 0.1em;
-  }
-  .ornament {
-    margin: 18px auto 0;
-    color: var(--gold);
-    font-size: 1.2rem;
-    letter-spacing: 0.5em;
-    opacity: 0.6;
-  }
-
-  /* ── Upload section ── */
-  .upload-section {
-    max-width: 600px;
-    margin: 50px auto 0;
-    padding: 0 20px;
-  }
-
-  .drop-zone {
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    padding: 48px 32px;
-    text-align: center;
-    cursor: pointer;
-    background: rgba(201,168,76,0.03);
-    transition: background 0.3s, border-color 0.3s;
-    position: relative;
-    overflow: hidden;
-  }
-  .drop-zone::before, .drop-zone::after {
-    content: '';
-    position: absolute;
-    width: 40px; height: 40px;
-    border-color: var(--gold);
-    border-style: solid;
-    opacity: 0.5;
-  }
-  .drop-zone::before { top: 12px; left: 12px; border-width: 1px 0 0 1px; }
-  .drop-zone::after  { bottom: 12px; right: 12px; border-width: 0 1px 1px 0; }
-  .drop-zone:hover, .drop-zone.drag-over {
-    background: rgba(201,168,76,0.07);
-    border-color: rgba(201,168,76,0.6);
-  }
-
-  .drop-icon { font-size: 3rem; margin-bottom: 14px; opacity: 0.8; }
-  .drop-text { font-size: 1.1rem; color: var(--cream); font-style: italic; }
-  .drop-sub  { margin-top: 6px; font-size: 0.85rem; color: var(--muted); }
-
-  #file-input { display: none; }
-
-  /* Preview */
-  #preview-wrap {
-    margin-top: 24px;
-    display: none;
-    text-align: center;
-  }
-  #preview-img {
-    max-width: 100%; max-height: 280px;
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    filter: sepia(0.15) contrast(1.05);
-  }
-
-  /* ── Buttons ── */
-  .btn-divine {
-    display: block;
-    width: 100%;
-    margin-top: 28px;
-    padding: 16px 32px;
-    font-family: 'Cinzel Decorative', serif;
-    font-size: 1rem;
-    font-weight: 700;
-    letter-spacing: 0.15em;
-    color: var(--ink);
-    background: linear-gradient(135deg, var(--gold) 0%, var(--gold2) 50%, var(--gold) 100%);
-    border: none;
-    border-radius: 2px;
-    cursor: pointer;
-    text-transform: uppercase;
-    transition: opacity 0.2s, transform 0.2s;
-  }
-  .btn-divine:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
-  .btn-divine:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  /* ── Loading ── */
-  #loading {
-    display: none;
-    text-align: center;
-    padding: 40px 20px;
-  }
-  .crystal-ball {
-    font-size: 4rem;
-    display: inline-block;
-    animation: spin-glow 2s linear infinite;
-  }
-  @keyframes spin-glow {
-    0%   { filter: drop-shadow(0 0 8px var(--mystic)); transform: scale(1); }
-    50%  { filter: drop-shadow(0 0 24px var(--glow)); transform: scale(1.1); }
-    100% { filter: drop-shadow(0 0 8px var(--mystic)); transform: scale(1); }
-  }
-  .loading-text {
-    margin-top: 16px;
-    font-style: italic;
-    color: var(--muted);
-    font-size: 1.05rem;
-    animation: pulse-text 1.8s ease-in-out infinite;
-  }
-  @keyframes pulse-text { 0%,100%{opacity:0.5} 50%{opacity:1} }
-
-  /* ── Result card ── */
-  #result {
-    display: none;
-    max-width: 640px;
-    margin: 40px auto 60px;
-    padding: 0 20px;
-  }
-
-  .result-card {
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    background: rgba(17,14,31,0.8);
-    overflow: hidden;
-    animation: reveal 0.8s ease;
-  }
-  @keyframes reveal {
-    from { opacity: 0; transform: translateY(20px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-
-  .card-header {
-    background: linear-gradient(135deg, rgba(123,79,166,0.4), rgba(139,26,26,0.3));
-    padding: 28px 32px 22px;
-    text-align: center;
-    border-bottom: 1px solid var(--line);
-    position: relative;
-  }
-  .destiny-icon {
-    font-size: 3.5rem;
-    display: block;
-    margin-bottom: 8px;
-    filter: drop-shadow(0 0 12px var(--glow));
-  }
-  .destiny-name {
-    font-family: 'Cinzel Decorative', serif;
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--gold2);
-    letter-spacing: 0.08em;
-  }
-  .destiny-title {
-    margin-top: 6px;
-    font-size: 1rem;
-    font-style: italic;
-    color: var(--muted);
-    letter-spacing: 0.12em;
-  }
-  .cluster-badge {
-    position: absolute; top: 14px; right: 18px;
-    font-size: 0.7rem;
-    color: var(--muted);
-    font-family: monospace;
-    letter-spacing: 0.1em;
-  }
-
-  .card-body { padding: 28px 32px; }
-
-  .info-row {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 24px;
-    flex-wrap: wrap;
-  }
-  .info-chip {
-    flex: 1; min-width: 140px;
-    padding: 12px 16px;
-    border: 1px solid var(--line);
-    border-radius: 3px;
-    background: rgba(201,168,76,0.04);
-  }
-  .chip-label {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.15em;
-    color: var(--muted);
-    margin-bottom: 5px;
-  }
-  .chip-value { font-size: 1rem; color: var(--cream); }
-
-  .divider {
-    border: none;
-    border-top: 1px solid var(--line);
-    margin: 20px 0;
-  }
-
-  .destiny-desc {
-    font-size: 1.05rem;
-    line-height: 1.8;
-    color: rgba(245,237,214,0.85);
-    font-style: italic;
-    text-align: center;
-  }
-
-  .lucky-row {
-    margin-top: 22px;
-    padding: 16px 20px;
-    border: 1px solid rgba(201,168,76,0.2);
-    border-radius: 3px;
-    background: rgba(201,168,76,0.03);
-    display: flex;
-    align-items: center;
-    gap: 14px;
-  }
-  .lucky-label {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.15em;
-    color: var(--gold);
-    white-space: nowrap;
-  }
-  .lucky-values { font-size: 0.95rem; color: var(--cream); }
-
-  /* Confidence bar */
-  .conf-wrap { margin-top: 22px; }
-  .conf-label {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--muted);
-    margin-bottom: 8px;
-    display: flex;
-    justify-content: space-between;
-  }
-  .conf-bar-bg {
-    height: 4px;
-    background: rgba(255,255,255,0.06);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-  .conf-bar-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--mystic), var(--gold));
-    border-radius: 2px;
-    transition: width 1.2s cubic-bezier(.16,1,.3,1);
-  }
-
-  .btn-reset {
-    display: block;
-    width: 100%;
-    margin-top: 24px;
-    padding: 12px;
-    background: transparent;
-    border: 1px solid var(--line);
-    color: var(--muted);
-    font-family: 'Cormorant Garamond', serif;
-    font-size: 0.9rem;
-    letter-spacing: 0.1em;
-    cursor: pointer;
-    border-radius: 2px;
-    transition: color 0.2s, border-color 0.2s;
-  }
-  .btn-reset:hover { color: var(--cream); border-color: var(--gold); }
-
-  /* Error */
-  .error-box {
-    padding: 20px 24px;
-    border: 1px solid rgba(139,26,26,0.6);
-    border-radius: 3px;
-    background: rgba(139,26,26,0.1);
-    color: #e07070;
-    font-style: italic;
-    text-align: center;
-  }
-
-  /* Footer */
-  footer {
-    text-align: center;
-    padding: 24px;
-    font-size: 0.78rem;
-    color: var(--muted);
-    border-top: 1px solid var(--line);
-    letter-spacing: 0.08em;
-  }
-</style>
-</head>
-<body>
-
-<!-- Stars -->
-<div class="stars" id="stars"></div>
-
-<main>
-  <header>
-    <span class="eye-symbol">🔮</span>
-    <h1>Chỉ Tay Huyền Bí</h1>
-    <p class="tagline">Khám phá vận mệnh qua dấu ấn bàn tay · Palmistry AI</p>
-    <div class="ornament">✦ ✦ ✦</div>
-  </header>
-
-  <div class="upload-section">
-    <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
-      <div class="drop-icon">🖐️</div>
-      <div class="drop-text">Đặt ảnh bàn tay vào đây</div>
-      <div class="drop-sub">hoặc nhấn để chọn ảnh · JPG / PNG · tối đa 10 MB</div>
-      <input type="file" id="file-input" accept="image/*"/>
-    </div>
-
-    <div id="preview-wrap">
-      <img id="preview-img" alt="Preview"/>
-    </div>
-
-    <button class="btn-divine" id="btn-read" disabled onclick="submitImage()">
-      ✦ &nbsp; Đọc Vận Mệnh &nbsp; ✦
-    </button>
-  </div>
-
-  <div id="loading">
-    <div class="crystal-ball">🔮</div>
-    <div class="loading-text">Đang giải mã bàn tay của bạn…</div>
-  </div>
-
-  <div id="result"></div>
-</main>
-
-<footer>
-  Palmistry AI · Bài 5 – Nhận Dạng Chỉ Tay · IITD Palmprint Dataset · CNN + KMeans
-</footer>
-
-<script>
-// ── Generate stars ──────────────────────────────────────────────────────────
-(function(){
-  const c = document.getElementById('stars');
-  for(let i=0;i<120;i++){
-    const s = document.createElement('div');
-    s.className='star';
-    const size = Math.random()*2+0.5;
-    s.style.cssText = `
-      width:${size}px; height:${size}px;
-      top:${Math.random()*100}%; left:${Math.random()*100}%;
-      --dur:${(Math.random()*4+2).toFixed(1)}s;
-      --del:-${(Math.random()*6).toFixed(1)}s;
-      --op:${(Math.random()*0.6+0.2).toFixed(2)};
-    `;
-    c.appendChild(s);
-  }
-})();
-
-// ── File handling ────────────────────────────────────────────────────────────
-let selectedFile = null;
-
-const dropZone = document.getElementById('drop-zone');
-const fileInput = document.getElementById('file-input');
-const btnRead   = document.getElementById('btn-read');
-
-fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
-
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-dropZone.addEventListener('drop', e => {
-  e.preventDefault();
-  dropZone.classList.remove('drag-over');
-  handleFile(e.dataTransfer.files[0]);
-});
-
-function handleFile(file) {
-  if (!file || !file.type.startsWith('image/')) return;
-  selectedFile = file;
-  const reader = new FileReader();
-  reader.onload = ev => {
-    document.getElementById('preview-img').src = ev.target.result;
-    document.getElementById('preview-wrap').style.display = 'block';
-  };
-  reader.readAsDataURL(file);
-  btnRead.disabled = false;
-  document.getElementById('result').style.display = 'none';
+FORTUNE = {
+    0:  "Học tập: Bạn sở hữu trực giác sắc bén, tiếp thu kiến thức rất nhanh, nhưng cần rèn luyện tính kỷ luật để đạt kết quả xuất sắc.\n\nSức khỏe: Thể trạng ổn định, tuy nhiên đừng bỏ bê việc nghỉ ngơi.\n\nTình duyên: Những rung động nhẹ nhàng đang đến, hãy để trái tim dẫn lối.",
+    1:  "Học tập: Con đường học vấn đang rộng mở, sự kiên trì bền bỉ chính là chìa khóa giúp bạn chinh phục mọi đỉnh cao.\n\nSức khỏe: Hệ tiêu hóa hơi nhạy cảm, bạn nên ưu tiên chế độ ăn uống thanh đạm.\n\nTình duyên: Một mối quan hệ dựa trên sự tin tưởng và thấu hiểu sẽ là điểm tựa tinh thần.",
+    2:  "Học tập: Bạn thường xuyên có những ý tưởng bay bổng, hãy cân bằng lại với thực tế để đạt hiệu quả cao nhất.\n\nSức khỏe: Đôi mắt cần được chăm sóc, tránh nhìn màn hình quá lâu.\n\nTình duyên: Những tín hiệu tích cực đang đến gần, một người mới sẽ chủ động tiến về phía bạn.",
+    3:  "Học tập: Tố chất lãnh đạo tiềm ẩn giúp bạn luôn tỏa sáng khi làm việc nhóm.\n\nSức khỏe: Cần chú ý đến các khớp xương và duy trì vận động nhẹ nhàng mỗi ngày.\n\nTình duyên: Tình yêu lúc này đòi hỏi sự kiên nhẫn và niềm tin tuyệt đối.",
+    4:  "Học tập: Tư duy sáng tạo và tâm hồn nghệ sĩ giúp bạn rất hợp với các lĩnh vực nhân văn, nghệ thuật.\n\nSức khỏe: Tinh thần minh mẫn, vẻ ngoài tràn đầy sức sống.\n\nTình duyên: Dẫu đường tình đôi lúc có chút chông chênh, nhưng kết quả cuối cùng sẽ rất ngọt ngào.",
+    5:  "Học tập: Bạn đang chịu khá nhiều áp lực, hãy học cách thả lỏng để não bộ làm việc hiệu quả hơn.\n\nSức khỏe: Cần bổ sung dưỡng chất và tuân thủ giờ giấc nghỉ ngơi khoa học.\n\nTình duyên: Đừng quá khép kín, việc mở lòng sẽ mang đến cho bạn cơ hội bất ngờ.",
+    6:  "Học tập: Trí nhớ của bạn là một tài sản quý giá, hãy tận dụng nó để chinh phục những kiến thức khó.\n\nSức khỏe: Chú ý theo dõi huyết áp và tránh xa những thực phẩm quá mặn.\n\nTình duyên: Một cuộc gặp gỡ bất ngờ từ quá khứ sẽ gợi lại những kỷ niệm đẹp.",
+    7:  "Học tập: Sự chọn lọc tinh tế giúp bạn không bị quá tải trong biển kiến thức mênh mông.\n\nSức khỏe: Sức đề kháng tốt, cơ thể ít khi gặp phải những cơn ốm vặt.\n\nTình duyên: Hai tâm hồn đồng điệu đang tìm đến nhau, đây là thời điểm vàng.",
+    8:  "Học tập: Sự nghiệp học hành đang thăng tiến vượt bậc như diều gặp gió.\n\nSức khỏe: Việc duy trì thói quen tập luyện sẽ giúp cơ thể thêm dẻo dai.\n\nTình duyên: Mối quan hệ tiến triển theo chiều hướng chậm mà chắc, bền vững và đầy trân trọng.",
+    9:  "Học tập: Bạn dễ bị xao nhãng bởi các yếu tố bên ngoài, sự tập trung cao độ sẽ giúp bạn làm nên chuyện lớn.\n\nSức khỏe: Cần kiểm soát căng thẳng và tìm đến những thú vui lành mạnh.\n\nTình duyên: Hãy kiên nhẫn, người xứng đáng nhất sẽ xuất hiện đúng lúc.",
+    10: "Học tập: Có quý nhân phù trợ trong con đường học vấn, mọi trở ngại sẽ sớm được hóa giải.\n\nSức khỏe: Trạng thái cơ thể rất tốt, chỉ cần duy trì lối sống điều độ.\n\nTình duyên: Bạn rất có sức hút, nên cẩn thận kẻo sự đa sầu đa cảm khiến khó quyết định.",
+    11: "Học tập: Nỗ lực gấp đôi so với hiện tại sẽ mang lại kết quả vượt ngoài mong đợi.\n\nSức khỏe: Chú ý đến đường hô hấp, tránh tiếp xúc nơi ô nhiễm.\n\nTình duyên: Một chuyện tình đẹp đòi hỏi sự thành thật và vun vén từ cả hai phía.",
+    12: "Học tập: Bạn có năng khiếu đặc biệt với các con số hoặc kỹ thuật, hãy khai thác thế mạnh này.\n\nSức khỏe: Đừng quên vận động vai gáy và lưng sau nhiều giờ làm việc.\n\nTình duyên: Người yêu bạn rất tinh tế, họ luôn biết cách làm cho bạn cảm thấy đặc biệt.",
+    13: "Học tập: Những ý tưởng độc đáo của bạn rất cần được chia sẻ, đừng ngần ngại bày tỏ quan điểm.\n\nSức khỏe: Cung cấp đủ nước cho cơ thể mỗi ngày là chìa khóa của sự tỉnh táo.\n\nTình duyên: Tuần này là cơ hội tốt để kết nối với người hợp cạ với bạn.",
+    14: "Học tập: Kiên trì là phẩm chất vàng, chỉ cần không nản chí bạn chắc chắn sẽ thành công.\n\nSức khỏe: Cơ thể đang trong giai đoạn hồi phục và tràn đầy năng lượng.\n\nTình duyên: Những tranh cãi nhỏ chỉ là gia vị của tình yêu, hãy nói chuyện thẳng thắn.",
+    15: "Học tập: Tài năng thiên bẩm giúp bạn đạt được thành công sớm hơn dự định.\n\nSức khỏe: Bạn đang sở hữu nguồn năng lượng dồi dào.\n\nTình duyên: Người ấy coi bạn như món quà quý giá, hãy trân trọng hạnh phúc này.",
 }
 
-// ── Submit ────────────────────────────────────────────────────────────────────
-function submitImage() {
-  if (!selectedFile) return;
-  btnRead.disabled = true;
-  document.querySelector('.upload-section').style.opacity = '0.4';
-  document.getElementById('loading').style.display = 'block';
-  document.getElementById('result').style.display = 'none';
-
-  const fd = new FormData();
-  fd.append('image', selectedFile);
-
-  fetch('/predict', { method: 'POST', body: fd })
-    .then(r => r.json())
-    .then(data => showResult(data))
-    .catch(() => showError('Đã có lỗi xảy ra. Vui lòng thử lại.'))
-    .finally(() => {
-      document.getElementById('loading').style.display = 'none';
-      document.querySelector('.upload-section').style.opacity = '1';
-      btnRead.disabled = false;
-    });
+HAND_LABEL_VI = {
+    "left":  "Bàn Tay Trái",
+    "right": "Bàn Tay Phải",
+    "both":  "Cả Hai Tay",
 }
 
-// ── Render result ─────────────────────────────────────────────────────────────
-function showResult(data) {
-  const el = document.getElementById('result');
-  if (data.error) { showError(data.error); return; }
+class PalmApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("✦ Bói Bàn Tay · Palmistry AI ✦")
+        self.geometry("960x740")
+        self.minsize(860, 660)
+        self.configure(fg_color=DEEP_PURPLE)
 
-  const d = data.destiny;
-  const conf = data.confidence;
+        self.assets = None
+        self.img_path = None
+        self._photo = None
+        self._loading_angle = 0
+        self._loading_active = False
 
-  el.innerHTML = `
-    <div class="result-card">
-      <div class="card-header">
-        <span class="cluster-badge">Nhóm #${data.cluster_id}</span>
-        <span class="destiny-icon">${d.icon}</span>
-        <div class="destiny-name">${d.name}</div>
-        <div class="destiny-title">${d.title}</div>
-      </div>
-      <div class="card-body">
-        <div class="info-row">
-          <div class="info-chip">
-            <div class="chip-label">Loại Bàn Tay</div>
-            <div class="chip-value">${data.palm_type_label}</div>
-          </div>
-          <div class="info-chip">
-            <div class="chip-label">Nguyên Tố</div>
-            <div class="chip-value">${d.element}</div>
-          </div>
-        </div>
-        <div class="chip-label" style="font-size:0.78rem;color:var(--muted);font-style:italic;margin-bottom:10px;">
-          ${data.palm_type_desc}
-        </div>
+        self._build_ui()
+        self._load_models_async()
 
-        <hr class="divider"/>
+    def _build_ui(self):
+        self.grid_columnconfigure(0, weight=1, minsize=320)
+        self.grid_columnconfigure(1, weight=2)
+        self.grid_rowconfigure(0, weight=0)
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=0)
 
-        <p class="destiny-desc">"${d.desc}"</p>
+        self._build_header()
+        self._build_left_panel()
+        self._build_right_panel()
+        self._build_footer()
 
-        <div class="lucky-row">
-          <span class="lucky-label">✦ May Mắn</span>
-          <span class="lucky-values">${d.lucky}</span>
-        </div>
+    def _build_header(self):
+        hdr = ctk.CTkFrame(self, fg_color=MID_PURPLE, corner_radius=0, height=64)
+        hdr.grid(row=0, column=0, columnspan=2, sticky="ew")
+        hdr.grid_propagate(False)
+        hdr.grid_columnconfigure(0, weight=1)
 
-        <div class="conf-wrap">
-          <div class="conf-label">
-            <span>Độ Tin Cậy Phân Loại</span>
-            <span>${conf}%</span>
-          </div>
-          <div class="conf-bar-bg">
-            <div class="conf-bar-fill" id="conf-fill" style="width:0%"></div>
-          </div>
-        </div>
+        title = ctk.CTkLabel(
+            hdr,
+            text="✦  BÓI BÀN TAY · PALMISTRY AI  ✦",
+            font=ctk.CTkFont(family="Georgia", size=20, weight="bold"),
+            text_color=TEXT_GOLD,
+        )
+        title.grid(row=0, column=0, pady=18)
 
-        <button class="btn-reset" onclick="resetApp()">↩ Đọc Bàn Tay Khác</button>
-      </div>
-    </div>
-  `;
+        self.status_dot = ctk.CTkLabel(
+            hdr, text="● Đang tải mô hình...",
+            font=ctk.CTkFont(size=11),
+            text_color=TEXT_MUTED,
+        )
+        self.status_dot.grid(row=0, column=1, padx=20)
 
-  el.style.display = 'block';
-  setTimeout(() => {
-    document.getElementById('conf-fill').style.width = conf + '%';
-  }, 100);
-  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
+    def _build_left_panel(self):
+        left = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=0)
+        left.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=12)
+        left.grid_columnconfigure(0, weight=1)
+        left.grid_rowconfigure(2, weight=1)
 
-function showError(msg) {
-  const el = document.getElementById('result');
-  el.innerHTML = `<div class="error-box">⚠ ${msg}</div>`;
-  el.style.display = 'block';
-}
+        section_lbl = ctk.CTkLabel(
+            left, text="📷  ẢNH BÀN TAY",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=ACCENT_GOLD,
+        )
+        section_lbl.grid(row=0, column=0, padx=16, pady=(16, 8), sticky="w")
 
-function resetApp() {
-  selectedFile = null;
-  document.getElementById('file-input').value = '';
-  document.getElementById('preview-wrap').style.display = 'none';
-  document.getElementById('preview-img').src = '';
-  document.getElementById('result').style.display = 'none';
-  document.getElementById('btn-read').disabled = true;
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-</script>
-</body>
-</html>
-"""
+        self.img_canvas = tk.Canvas(
+            left, bg="#120626", bd=0, highlightthickness=1,
+            highlightbackground=BORDER_COLOR, width=280, height=280,
+        )
+        self.img_canvas.grid(row=1, column=0, padx=16, pady=0, sticky="ew")
+        self._draw_placeholder()
 
-# ── Routes ────────────────────────────────────────────────────────────────────
-@app.route("/")
-def index():
-    return render_template_string(HTML)
+        btn_frame = ctk.CTkFrame(left, fg_color="transparent")
+        btn_frame.grid(row=2, column=0, padx=16, pady=12, sticky="ew")
+        btn_frame.grid_columnconfigure((0, 1), weight=1)
 
+        self.upload_btn = ctk.CTkButton(
+            btn_frame,
+            text="📁  Chọn Ảnh",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=ACCENT_VIOLET,
+            hover_color="#9B7EC8",
+            text_color=TEXT_MAIN,
+            corner_radius=8,
+            height=40,
+            command=self._pick_image,
+        )
+        self.upload_btn.grid(row=0, column=0, padx=(0, 4), sticky="ew")
 
-@app.route("/predict", methods=["POST"])
-def predict_route():
-    if "image" not in request.files:
-        return jsonify({"error": "Không tìm thấy ảnh trong request."}), 400
+        self.predict_btn = ctk.CTkButton(
+            btn_frame,
+            text="🔮  Bói Ngay",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=ACCENT_GOLD,
+            hover_color=ACCENT_GLOW,
+            text_color="#1A0A2E",
+            corner_radius=8,
+            height=40,
+            state="disabled",
+            command=self._run_predict,
+        )
+        self.predict_btn.grid(row=0, column=1, padx=(4, 0), sticky="ew")
 
-    img_file = request.files["image"]
-    if img_file.filename == "":
-        return jsonify({"error": "Tên file không hợp lệ."}), 400
+        info_frame = ctk.CTkFrame(left, fg_color="#150B30", corner_radius=8)
+        info_frame.grid(row=3, column=0, padx=16, pady=(0, 16), sticky="ew")
+        info_frame.grid_columnconfigure((0, 1), weight=1)
 
-    ext = os.path.splitext(img_file.filename)[1].lower()
-    if ext not in (".jpg", ".jpeg", ".png", ".bmp", ".webp"):
-        return jsonify({"error": "Định dạng ảnh không được hỗ trợ."}), 400
+        ctk.CTkLabel(info_frame, text="Loại bàn tay:", font=ctk.CTkFont(size=11), text_color=TEXT_MUTED).grid(row=0, column=0, sticky="w", padx=10, pady=(10, 2))
+        self.hand_var = ctk.CTkLabel(info_frame, text="—", font=ctk.CTkFont(size=12, weight="bold"), text_color=TEXT_GOLD)
+        self.hand_var.grid(row=1, column=0, sticky="w", padx=10, pady=(0, 10))
 
-    tmp_path = os.path.join(UPLOAD_FOLDER, f"{uuid.uuid4().hex}{ext}")
-    try:
-        img_file.save(tmp_path)
-        from predict import predict
-        result = predict(tmp_path)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": f"Lỗi xử lý: {str(e)}"}), 500
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        ctk.CTkLabel(info_frame, text="Độ tin cậy:", font=ctk.CTkFont(size=11), text_color=TEXT_MUTED).grid(row=0, column=1, sticky="w", padx=10, pady=(10, 2))
+        self.conf_var = ctk.CTkLabel(info_frame, text="—", font=ctk.CTkFont(size=12, weight="bold"), text_color=SUCCESS_GREEN)
+        self.conf_var.grid(row=1, column=1, sticky="w", padx=10, pady=(0, 10))
+
+        ctk.CTkLabel(info_frame, text="Nhóm vận mệnh:", font=ctk.CTkFont(size=11), text_color=TEXT_MUTED).grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(6, 2))
+        self.cluster_var = ctk.CTkLabel(info_frame, text="—", font=ctk.CTkFont(size=13, weight="bold"), text_color=ACCENT_VIOLET)
+        self.cluster_var.grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=(0, 10))
+
+    def _build_right_panel(self):
+        right = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=0)
+        right.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=12)
+        right.grid_columnconfigure(0, weight=1)
+        right.grid_rowconfigure(1, weight=1)
+
+        section_lbl = ctk.CTkLabel(
+            right, text="🌙  LỜI TIÊN TRI",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=ACCENT_GOLD,
+        )
+        section_lbl.grid(row=0, column=0, padx=16, pady=(16, 8), sticky="w")
+
+        self.fortune_box = ctk.CTkScrollableFrame(
+            right, fg_color="#100825", corner_radius=8,
+            scrollbar_button_color=ACCENT_VIOLET,
+            scrollbar_button_hover_color=ACCENT_GOLD,
+        )
+        self.fortune_box.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
+        self.fortune_box.grid_columnconfigure(0, weight=1)
+
+        self.fortune_label = ctk.CTkLabel(
+            self.fortune_box,
+            text="Hãy chọn ảnh bàn tay và nhấn\n「Bói Ngay」để khám phá vận mệnh ✨",
+            font=ctk.CTkFont(family="Georgia", size=14),
+            text_color=TEXT_MUTED,
+            justify="center",
+            wraplength=460,
+        )
+        self.fortune_label.grid(row=0, column=0, padx=20, pady=60)
+
+        self.progress_canvas = tk.Canvas(
+            right, bg=CARD_BG, bd=0, highlightthickness=0, height=4,
+        )
+        self.progress_canvas.grid(row=2, column=0, sticky="ew", padx=0, pady=0)
+
+    def _build_footer(self):
+        foot = ctk.CTkFrame(self, fg_color=MID_PURPLE, corner_radius=0, height=30)
+        foot.grid(row=2, column=0, columnspan=2, sticky="ew")
+        foot.grid_propagate(False)
+
+        ctk.CTkLabel(
+            foot,
+            text="✦ Palmistry AI · Powered by Deep Learning  ·  Mô hình: CNN + KMeans  ✦",
+            font=ctk.CTkFont(size=10),
+            text_color=TEXT_MUTED,
+        ).pack(pady=6)
+
+    def _draw_placeholder(self):
+        self.img_canvas.delete("all")
+        w, h = 280, 280
+        self.img_canvas.create_rectangle(0, 0, w, h, fill="#120626", outline="")
+        cx, cy = w // 2, h // 2
+        for r, alpha in [(90, 20), (70, 30), (50, 40)]:
+            self.img_canvas.create_oval(
+                cx - r, cy - r, cx + r, cy + r,
+                outline=ACCENT_VIOLET, width=1,
+            )
+        self.img_canvas.create_text(
+            cx, cy,
+            text="🖐",
+            font=("Segoe UI Emoji", 48),
+            fill="#3D2870",
+        )
+        self.img_canvas.create_text(
+            cx, cy + 80,
+            text="Nhấn「Chọn Ảnh」để bắt đầu",
+            font=("Georgia", 11),
+            fill=TEXT_MUTED,
+        )
+
+    def _pick_image(self):
+        path = filedialog.askopenfilename(
+            title="Chọn ảnh bàn tay",
+            filetypes=[("Image files", "*.jpg *.jpeg *.png *.bmp *.webp"), ("All", "*.*")],
+        )
+        if not path:
+            return
+        self.img_path = path
+        self._show_image(path)
+        if self.assets:
+            self.predict_btn.configure(state="normal")
+        self.fortune_label.configure(
+            text='Ảnh đã được tải lên!\nNhấn 「Bói Ngay」 để khám phá vận mệnh 🔮',
+            text_color=TEXT_MAIN,
+        )
+        self.hand_var.configure(text="—")
+        self.conf_var.configure(text="—")
+        self.cluster_var.configure(text="—")
+
+    def _show_image(self, path):
+        try:
+            img = Image.open(path).convert("RGB")
+            img.thumbnail((270, 270), Image.LANCZOS)
+            w, h = img.size
+            self.img_canvas.config(width=280, height=280)
+            self.img_canvas.delete("all")
+            self.img_canvas.create_rectangle(0, 0, 280, 280, fill="#120626", outline="")
+            ox = (280 - w) // 2
+            oy = (280 - h) // 2
+            self._photo = ImageTk.PhotoImage(img)
+            self.img_canvas.create_image(ox, oy, anchor="nw", image=self._photo)
+            self.img_canvas.create_rectangle(ox, oy, ox + w, oy + h, outline=ACCENT_GOLD, width=2)
+        except Exception as e:
+            self._show_error(f"Không thể đọc ảnh:\n{e}")
+
+    def _load_models_async(self):
+        def worker():
+            try:
+                from predict import load_all_assets
+                assets = load_all_assets()
+                self.after(0, self._on_models_loaded, assets)
+            except Exception as e:
+                self.after(0, self._on_models_error, str(e))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_models_loaded(self, assets):
+        self.assets = assets
+        self.status_dot.configure(text="● Sẵn sàng", text_color=SUCCESS_GREEN)
+        if self.img_path:
+            self.predict_btn.configure(state="normal")
+
+    def _on_models_error(self, msg):
+        self.status_dot.configure(text="● Lỗi mô hình", text_color="#E24B4A")
+        self._show_error(f"⚠ Không thể tải mô hình:\n{msg}\n\nĐảm bảo các file .h5 và .pkl nằm cùng thư mục với script này.")
+
+    def _run_predict(self):
+        if not self.assets or not self.img_path:
+            return
+        self.predict_btn.configure(state="disabled", text="⏳  Đang phán...")
+        self.fortune_label.configure(text="✨ Đang đọc vân tay của bạn...", text_color=ACCENT_GOLD)
+        self._start_progress_anim()
+
+        def worker():
+            try:
+                from predict import predict_palmistry
+                hand_type, confidence, cluster, message = predict_palmistry(self.img_path, self.assets)
+                self.after(0, self._show_result, hand_type, confidence, cluster, message)
+            except Exception as e:
+                self.after(0, self._show_error, str(e))
+            finally:
+                self.after(0, self._stop_progress_anim)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_result(self, hand_type, confidence, cluster, message):
+        label_vi = HAND_LABEL_VI.get(hand_type.lower(), hand_type)
+        self.hand_var.configure(text=label_vi)
+        self.conf_var.configure(text=f"{confidence:.1f}%")
+        self.cluster_var.configure(text=f"Nhóm #{cluster + 1}  (id: {cluster})")
+
+        stars = "★" * min(5, int(confidence / 20))
+        full_text = (
+            f"✦  VẬN MỆNH NHÓM #{cluster + 1}  ✦\n"
+            f"{'─' * 42}\n\n"
+            f"{message}\n\n"
+            f"{'─' * 42}\n"
+            f"Bàn tay: {label_vi}   |   Độ tin cậy: {confidence:.1f}%  {stars}"
+        )
+        self.fortune_label.configure(text=full_text, text_color=TEXT_MAIN, justify="left")
+        self.predict_btn.configure(state="normal", text="🔮  Bói Lại")
+
+    def _show_error(self, msg):
+        self.fortune_label.configure(text=f"⚠  Đã xảy ra lỗi:\n\n{msg}", text_color="#E24B4A")
+        self.predict_btn.configure(state="normal", text="🔮  Bói Ngay")
+
+    def _start_progress_anim(self):
+        self._loading_active = True
+        self._animate_progress()
+
+    def _stop_progress_anim(self):
+        self._loading_active = False
+        self.progress_canvas.delete("all")
+
+    def _animate_progress(self):
+        if not self._loading_active:
+            return
+        self.progress_canvas.delete("all")
+        w = self.progress_canvas.winfo_width() or 600
+        self._loading_angle = (self._loading_angle + 4) % 360
+        seg_len = int(w * 0.25)
+        start = int((self._loading_angle / 360) * w)
+        x1 = start % w
+        x2 = (start + seg_len) % w
+        if x1 < x2:
+            self.progress_canvas.create_rectangle(x1, 0, x2, 4, fill=ACCENT_GOLD, outline="")
+        else:
+            self.progress_canvas.create_rectangle(x1, 0, w, 4, fill=ACCENT_GOLD, outline="")
+            self.progress_canvas.create_rectangle(0, 0, x2, 4, fill=ACCENT_GOLD, outline="")
+        self.after(16, self._animate_progress)
 
 
 if __name__ == "__main__":
-    print("🔮  Palmistry AI đang khởi động...")
-    print("    Truy cập: http://localhost:5000")
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app = PalmApp()
+    app.mainloop()
